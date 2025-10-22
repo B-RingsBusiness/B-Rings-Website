@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>B-RINGS QR Ordering App</title>
+    <title>B-RINGS Ordering App</title>
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -37,6 +37,14 @@
         input[type='number'] {
             -moz-appearance: textfield;
         }
+        .selection-card {
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .selection-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
+        }
     </style>
 </head>
 <body class="bg-yellow-200 min-h-screen flex items-start justify-center p-4">
@@ -45,11 +53,32 @@
     </div>
 
     <script>
-        // --- CONFIGURATION & STATE ---
+        // --- CONFIGURATION & CONSTANTS ---
         const PRODUCT_NAME = "Banana Rings (B-RINGS)";
-        const PRICE_PER_UNIT = 20; // ₱20
         const BANANA_YELLOW = 'bg-yellow-400';
         const RING_BROWN = 'text-amber-900';
+        const GCASH_NUMBER = "09925381630"; 
+        
+        // Product Sizes and Prices
+        const SIZE_OPTIONS = [
+            { name: "Small", price: 20, emoji: "🤏", description: "Perfect snack size." },
+            { name: "Medium", price: 25, emoji: "👍", description: "Our most popular size." },
+            { name: "Large", price: 30, emoji: "💪", description: "Best value for sharing." }
+        ];
+
+        // Product Flavors
+        const FLAVOR_OPTIONS = [
+            { name: "Classic Crispy Batter", emoji: "🍯", description: "Our original golden-fried perfection." },
+            { name: "Cheesy Banana Melt", emoji: "🧀", description: "Sweet banana with a savory, melted cheese crust." },
+            { name: "Sweet Caramel", emoji: "🍮", description: "Drizzled with rich, buttery, homemade caramel." },
+            { name: "Cookies and Cream", emoji: "🍪", description: "Topped with crushed cookies and cream drizzle." }
+        ];
+        
+        // Utility for price lookup
+        const getPricePerUnit = (size) => {
+            const sizeOption = SIZE_OPTIONS.find(s => s.name === size);
+            return sizeOption ? sizeOption.price : 20; // Default to 20 if size is undefined
+        };
 
         const API_KEY = ""; // Placeholder for Canvas environment
         const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${API_KEY}`;
@@ -57,15 +86,17 @@
         
         // Global state object
         let appState = {
-            step: 1,
+            step: 1, 
             quantity: 1,
-            totalAmount: PRICE_PER_UNIT,
+            size: SIZE_OPTIONS[0].name, // Initialize with 'Small'
+            flavor: FLAVOR_OPTIONS[0].name, 
+            totalAmount: getPricePerUnit(SIZE_OPTIONS[0].name), // Calculated based on size and quantity
             fulfillment: null,
             deliveryDetails: {},
             paymentMethod: null,
             orderId: null,
-            status: 'Pending Scan',
-            caption: null, // For storing generated caption
+            status: 'Pending Order',
+            caption: null, 
         };
 
         // --- UTILITY FUNCTIONS ---
@@ -80,7 +111,6 @@
                 "🎉 Status: Delivered! Enjoy your B-RINGS!",
                 "📍 Status: Ready for Pick Up at B-RINGS HQ."
             ];
-            // Use the last digit of the ID to determine the mock status consistently
             const index = parseInt(orderId.slice(-1)) % statuses.length;
             return statuses[index];
         };
@@ -92,7 +122,16 @@
             tempInput.select();
             document.execCommand('copy');
             document.body.removeChild(tempInput);
-            console.log('Caption copied to clipboard!'); 
+            console.log('Text copied to clipboard!'); 
+        };
+        
+        const copyGcashNumber = () => {
+            copyToClipboard(GCASH_NUMBER);
+            const statusEl = document.getElementById('copy-status');
+            if (statusEl) {
+                statusEl.textContent = 'Copied!';
+                setTimeout(() => { statusEl.textContent = 'Tap to Copy'; }, 2000);
+            }
         };
 
         /**
@@ -102,15 +141,17 @@
          */
         const updateStateAndRender = (updates = {}, newStep = appState.step) => {
             appState = { ...appState, ...updates };
-            appState.totalAmount = appState.quantity * PRICE_PER_UNIT;
+            
+            // Recalculate total amount based on new size and quantity
+            const unitPrice = getPricePerUnit(appState.size);
+            appState.totalAmount = appState.quantity * unitPrice; 
+            
             appState.step = newStep;
             
-            // Auto-assign orderId if moving past the quantity step
-            if (appState.step > 3 && !appState.orderId) {
+            if (appState.step > 3 && !appState.orderId) { // Order details is now step 3
                 appState.orderId = generateOrderId();
             }
 
-            // Scroll to top
             document.querySelector('#app').scrollTop = 0;
             renderApp();
         };
@@ -119,9 +160,6 @@
         
         /**
          * Calls the Gemini API to generate a creative caption.
-         * @param {string} prompt The user's request.
-         * @param {string} systemInstruction The system prompt for the model's persona.
-         * @returns {Promise<string>} The generated text.
          */
         const generateCaption = async (prompt, systemInstruction) => {
             const payload = {
@@ -140,7 +178,7 @@
                     if (!response.ok) {
                         if (attempt < MAX_RETRIES - 1) {
                             await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
-                            continue; // Retry
+                            continue; 
                         }
                         throw new Error(`API call failed with status: ${response.status}`);
                     }
@@ -161,8 +199,9 @@
         };
 
 
-        // --- UI RENDER FUNCTIONS (STEPS) ---
+        // --- UI RENDER FUNCTIONS (STEPS 1-9) ---
 
+        // STEP 1: Welcome
         const Step1_Welcome = () => `
             <div class="flex flex-col items-center p-4">
                 <h2 class="text-4xl font-extrabold ${RING_BROWN} mb-2">Welcome to</h2>
@@ -182,81 +221,148 @@
             </div>
         `;
         const setupStep1 = () => {
-            document.getElementById('btn-start-ordering').onclick = () => updateStateAndRender({}, 2);
+            document.getElementById('btn-start-ordering').onclick = () => updateStateAndRender({}, 2); // Go to new Step 2
         };
 
 
-        const Step2_ScanQR = () => `
-            <div class="flex flex-col items-center p-4">
-                <h2 class="text-3xl font-bold ${RING_BROWN} mb-4">Scan to Start</h2>
-                <p class="text-gray-600 text-center mb-8">
-                    In a real setup, this area would launch your device's camera to scan the master B-RINGS QR Code.
-                </p>
-                <div class="w-60 h-60 bg-gray-200 flex items-center justify-center rounded-2xl border-4 border-dashed border-gray-400 mb-8 shadow-inner">
-                    <span class="text-5xl text-gray-500">📷 QR Area</span>
+        // Helper function for rendering size cards
+        const SizeCard = (size) => `
+            <div
+                id="size-card-${size.name}"
+                data-size="${size.name}"
+                class="selection-card p-4 rounded-xl shadow-lg border-2 flex flex-col items-center space-y-2 
+                       ${appState.size === size.name ? 'border-green-500 bg-green-50' : 'border-yellow-300 bg-white'}"
+            >
+                <span class="text-4xl">${size.emoji}</span>
+                <h3 class="font-extrabold text-2xl text-gray-800">${size.name}</h3>
+                <p class="text-3xl font-bold text-amber-600">₱${size.price}</p>
+                <p class="text-sm text-gray-500 text-center">${size.description}</p>
+                ${appState.size === size.name ? '<span class="text-green-500 font-extrabold">✓ Selected</span>' : ''}
+            </div>
+        `;
+
+        // NEW STEP 2: Size Selection
+        const Step2_SizeSelection = () => `
+            <div class="p-4">
+                <h2 class="text-3xl font-bold ${RING_BROWN} mb-6 text-center">Choose Your Size</h2>
+                <div class="grid grid-cols-3 gap-3" id="size-selection-container">
+                    ${SIZE_OPTIONS.map(SizeCard).join('')}
                 </div>
+                
+                <p class="text-sm text-center text-gray-500 mt-4">Price is per unit of chosen size.</p>
+
                 <button
-                    id="btn-simulate-scan"
-                    class="w-full py-3 bg-green-500 text-white text-xl font-semibold rounded-lg hover:bg-green-600 transition"
+                    id="btn-confirm-size"
+                    class="w-full mt-6 py-4 text-white text-xl font-bold rounded-lg bg-yellow-600 hover:bg-yellow-700 transition shadow-lg"
                 >
-                    Simulate QR Scan (View Menu)
+                    Select Size and Continue
                 </button>
             </div>
         `;
         const setupStep2 = () => {
-            document.getElementById('btn-simulate-scan').onclick = () => updateStateAndRender({ status: 'Menu Scanned' }, 3);
+            SIZE_OPTIONS.forEach(size => {
+                const card = document.getElementById(`size-card-${size.name}`);
+                if (card) {
+                    card.onclick = () => {
+                        const newSize = card.getAttribute('data-size');
+                        updateStateAndRender({ size: newSize });
+                    };
+                }
+            });
+            document.getElementById('btn-confirm-size').onclick = () => updateStateAndRender({}, 3); // Go to new Step 3
         };
-
-
-        const Step3_OrderDetails = () => `
-            <div class="p-4">
-                <h2 class="text-3xl font-bold ${RING_BROWN} mb-6 text-center">Your B-RINGS Order</h2>
-                <div class="flex justify-between items-center mb-6 border-b pb-4">
-                    <div class="flex items-center space-x-4">
-                        <img src="https://placehold.co/80x80/FFC107/4E342E?text=Rings" alt="Banana Rings" class="rounded-xl shadow-md"/>
-                        <div>
-                            <p class="font-bold text-xl">${PRODUCT_NAME}</p>
-                            <p class="text-gray-500">Crispy Fried Banana Rings</p>
-                        </div>
-                    </div>
-                    <p class="text-2xl font-extrabold text-amber-600">₱${PRICE_PER_UNIT}</p>
+        
+        // Helper function for rendering flavor cards
+        const FlavorCard = (flavor) => `
+            <div
+                id="flavor-card-${flavor.name.replace(/\s/g, '-')}"
+                data-flavor="${flavor.name}"
+                class="selection-card p-4 rounded-xl shadow-lg border-2 flex items-center space-x-3 
+                       ${appState.flavor === flavor.name ? 'border-green-500 bg-green-50' : 'border-yellow-300 bg-white'}"
+            >
+                <span class="text-3xl">${flavor.emoji}</span>
+                <div class="flex-grow">
+                    <h3 class="font-bold text-lg text-gray-800">${flavor.name}</h3>
+                    <p class="text-sm text-gray-500">${flavor.description}</p>
                 </div>
-
-                <div class="flex justify-between items-center mb-8">
-                    <label class="text-xl font-semibold text-gray-700">Quantity</label>
-                    <input
-                        type="number"
-                        min="1"
-                        id="input-quantity"
-                        value="${appState.quantity}"
-                        class="w-20 text-center text-2xl font-bold p-2 border-2 border-yellow-500 rounded-lg focus:ring-yellow-500 focus:border-yellow-500"
-                    />
-                </div>
-
-                <div class="text-right p-4 bg-yellow-100 rounded-lg">
-                    <p class="text-2xl font-bold text-gray-800">Total: <span class="text-green-600">₱${appState.totalAmount}</span></p>
-                </div>
-
-                <button
-                    id="btn-proceed-fulfillment"
-                    class="w-full mt-6 py-4 text-white text-xl font-bold rounded-lg ${BANANA_YELLOW} hover:bg-yellow-500 transition"
-                >
-                    Proceed to Fulfillment
-                </button>
+                ${appState.flavor === flavor.name ? '<span class="text-green-500 font-extrabold">✓</span>' : ''}
             </div>
         `;
+
+        // NEW STEP 3: Flavor & Quantity
+        const Step3_OrderDetails = () => {
+            const currentPrice = getPricePerUnit(appState.size);
+            return `
+                <div class="p-4">
+                    <h2 class="text-3xl font-bold ${RING_BROWN} mb-6 text-center">Customize Your Order</h2>
+                    
+                    <div class="bg-yellow-100 p-4 rounded-xl mb-6 shadow-inner">
+                        <p class="text-xl font-bold text-amber-700 mb-1">Current Item Price:</p>
+                        <p class="text-3xl font-extrabold text-amber-600">
+                            ${appState.size} @ ₱${currentPrice} / unit
+                        </p>
+                        <p class="text-xs text-gray-500 mt-1 cursor-pointer hover:text-gray-700" onclick="updateStateAndRender({}, 2)">
+                            Tap here to change size
+                        </p>
+                    </div>
+
+                    <!-- Flavor Selection (Card Layout) -->
+                    <div class="mb-8">
+                        <label class="block text-xl font-semibold text-gray-700 mb-4">Select Flavor</label>
+                        <div id="flavor-selection-container" class="space-y-3">
+                            ${FLAVOR_OPTIONS.map(FlavorCard).join('')}
+                        </div>
+                    </div>
+
+                    <div class="flex justify-between items-center mb-8 pt-4 border-t border-yellow-200">
+                        <label class="text-xl font-semibold text-gray-700">Quantity</label>
+                        <input
+                            type="number"
+                            min="1"
+                            id="input-quantity"
+                            value="${appState.quantity}"
+                            class="w-20 text-center text-2xl font-bold p-2 border-2 border-yellow-500 rounded-lg focus:ring-yellow-500 focus:border-yellow-500"
+                        />
+                    </div>
+
+                    <div class="text-right p-4 bg-yellow-200 rounded-lg">
+                        <p class="text-2xl font-bold text-gray-800">Total: <span class="text-green-600">₱${appState.totalAmount}</span></p>
+                    </div>
+
+                    <button
+                        id="btn-proceed-fulfillment"
+                        class="w-full mt-6 py-4 text-white text-xl font-bold rounded-lg ${BANANA_YELLOW} hover:bg-yellow-500 transition shadow-lg"
+                    >
+                        Proceed to Fulfillment
+                    </button>
+                </div>
+            `;
+        };
         const setupStep3 = () => {
+            // Setup listener for quantity
             document.getElementById('input-quantity').onchange = (e) => {
                 const newQuantity = parseInt(e.target.value) || 1;
                 updateStateAndRender({ quantity: newQuantity });
             };
-            document.getElementById('btn-proceed-fulfillment').onclick = () => updateStateAndRender({ status: 'Fulfillment Selection' }, 4);
+            
+            // Setup listeners for flavor cards
+            FLAVOR_OPTIONS.forEach(flavor => {
+                const card = document.getElementById(`flavor-card-${flavor.name.replace(/\s/g, '-')}`);
+                if (card) {
+                    card.onclick = () => {
+                        const newFlavor = card.getAttribute('data-flavor');
+                        updateStateAndRender({ flavor: newFlavor });
+                    };
+                }
+            });
+            
+            document.getElementById('btn-proceed-fulfillment').onclick = () => updateStateAndRender({ status: 'Fulfillment Selection' }, 4); // Go to new Step 4
         };
 
 
         const FulfillmentCard = (type, icon, details, selected) => `
             <div
-                id="card-${type.toLowerCase()}"
+                id="card-${type.toLowerCase().replace(' ', '-')}"
                 class="p-6 rounded-xl cursor-pointer shadow-md border-4 ${selected ? 'border-green-500 bg-green-50' : 'border-yellow-300 bg-yellow-50 hover:bg-yellow-100'}"
             >
                 <p class="text-4xl mb-2">${icon}</p>
@@ -264,6 +370,7 @@
                 <p class="text-gray-600">${details}</p>
             </div>
         `;
+        // STEP 4: Fulfillment Choice
         const Step4_FulfillmentChoice = () => `
             <div class="p-4">
                 <h2 class="text-3xl font-bold ${RING_BROWN} mb-6 text-center">How would you like to get it?</h2>
@@ -274,8 +381,8 @@
             </div>
         `;
         const setupStep4 = () => {
-            document.getElementById('card-delivery').onclick = () => updateStateAndRender({ fulfillment: 'Delivery', status: 'Awaiting Address' }, 5);
-            document.getElementById('card-pick up').onclick = () => updateStateAndRender({ fulfillment: 'PickUp', status: 'Payment Awaiting' }, 6); // Skip address step
+            document.getElementById('card-delivery').onclick = () => updateStateAndRender({ fulfillment: 'Delivery', status: 'Awaiting Address' }, 5); // Go to new Step 5
+            document.getElementById('card-pick-up').onclick = () => updateStateAndRender({ fulfillment: 'PickUp', status: 'Payment Awaiting' }, 6); // Go to new Step 6 (skip address)
         };
 
 
@@ -292,6 +399,7 @@
                 />
             </div>
         `;
+        // STEP 5: Delivery Details
         const Step5_DeliveryDetails = () => `
             <div class="p-4">
                 <h2 class="text-3xl font-bold text-red-500 mb-6 text-center">Delivery Details</h2>
@@ -306,7 +414,7 @@
 
                     <button
                         type="submit"
-                        class="w-full mt-6 py-4 text-white text-xl font-bold rounded-lg bg-red-500 hover:bg-red-600 transition"
+                        class="w-full mt-6 py-4 text-white text-xl font-bold rounded-lg bg-red-500 hover:bg-red-600 transition shadow-lg"
                     >
                         Confirm Address
                     </button>
@@ -330,7 +438,7 @@
                     return;
                 }
                 errorDiv.classList.add('hidden');
-                updateStateAndRender({ deliveryDetails: details, status: 'Payment Awaiting' }, 6);
+                updateStateAndRender({ deliveryDetails: details, status: 'Payment Awaiting' }, 6); // Go to new Step 6
             };
         };
 
@@ -345,55 +453,69 @@
                 <p class="text-gray-600">${details}</p>
             </div>
         `;
+        // STEP 6: Payment Selection
         const Step6_PaymentSelect = () => `
             <div class="p-4">
                 <h2 class="text-3xl font-bold ${RING_BROWN} mb-6 text-center">Select Payment Method</h2>
                 <div class="grid grid-cols-1 gap-6">
-                    ${PaymentCard('GCash', '📱', 'Pay instantly by scanning our QR Code.', appState.paymentMethod === 'GCash')}
+                    ${PaymentCard('GCash', '📱', 'Pay instantly via number transfer.', appState.paymentMethod === 'GCash')}
                     ${PaymentCard('Cash', '💵', 'Pay in cash upon Pick Up or Delivery.', appState.paymentMethod === 'Cash')}
                 </div>
             </div>
         `;
         const setupStep6 = () => {
-            document.getElementById('card-gcash').onclick = () => updateStateAndRender({ paymentMethod: 'GCash', status: 'Awaiting GCash Scan' }, 7);
-            document.getElementById('card-cash').onclick = () => updateStateAndRender({ paymentMethod: 'Cash', status: 'Awaiting Cash Payment' }, 8);
+            document.getElementById('card-gcash').onclick = () => updateStateAndRender({ paymentMethod: 'GCash', status: 'Awaiting GCash Transfer' }, 7); // Go to new Step 7
+            document.getElementById('card-cash').onclick = () => updateStateAndRender({ paymentMethod: 'Cash', status: 'Awaiting Cash Payment' }, 8); // Go to new Step 8
         };
 
 
+        // STEP 7: GCash Transfer
         const Step7_PaymentQR = () => `
             <div class="p-4 flex flex-col items-center">
-                <h2 class="text-3xl font-bold text-green-700 mb-2 text-center">GCash Payment</h2>
-                <p class="text-gray-600 text-center mb-6">Scan the QR code below to complete your payment of:</p>
+                <h2 class="text-3xl font-bold text-green-700 mb-2 text-center">GCash Transfer</h2>
+                <p class="text-gray-600 text-center mb-6">Please transfer your exact payment amount of:</p>
 
                 <div class="text-4xl font-extrabold text-green-600 mb-8 p-3 bg-green-100 rounded-lg border-2 border-green-400">
                     ₱${appState.totalAmount}
                 </div>
 
-                <div class="w-60 h-60 bg-white flex items-center justify-center rounded-2xl p-4 border-4 border-green-500 mb-8 shadow-xl">
-                    <img src="https://placehold.co/150x150/00A9F4/FFFFFF?text=GCash+QR" alt="GCash QR Code" class="w-full h-full object-contain"/>
+                <p class="text-xl font-semibold text-gray-700 mb-3">Send to GCash Number:</p>
+                
+                <div 
+                    id="gcash-number-display" 
+                    class="w-full max-w-xs bg-white p-4 rounded-xl border-4 border-green-500 mb-8 shadow-xl text-center cursor-pointer hover:bg-green-50 transition" 
+                    onclick="copyGcashNumber()"
+                >
+                    <p class="text-3xl font-mono font-extrabold text-green-800">${GCASH_NUMBER}</p>
+                    <span class="text-sm text-green-600" id="copy-status">Tap to Copy</span>
                 </div>
 
                 <button
                     id="btn-payment-successful"
-                    class="w-full py-4 text-white text-xl font-bold rounded-lg bg-green-500 hover:bg-green-600 transition"
+                    class="w-full py-4 text-white text-xl font-bold rounded-lg bg-green-500 hover:bg-green-600 transition shadow-lg"
                 >
-                    Payment Successful (Simulate)
+                    Payment Sent (Simulate)
                 </button>
             </div>
         `;
         const setupStep7 = () => {
-            document.getElementById('btn-payment-successful').onclick = () => updateStateAndRender({ status: 'Payment Successful' }, 8);
+            document.getElementById('btn-payment-successful').onclick = () => updateStateAndRender({ status: 'Payment Successful' }, 8); // Go to new Step 8
         };
 
 
+        // STEP 8: Confirmation
         const Step8_Confirmation = () => `
             <div class="p-4">
                 <h2 class="text-4xl font-extrabold text-green-600 mb-4 text-center">Order Confirmed! 🎉</h2>
-                <div class="bg-green-50 p-6 rounded-xl border-4 border-green-300 mb-8">
+                <div class="bg-green-50 p-6 rounded-xl border-4 border-green-300 mb-8 shadow-inner">
                     <p class="text-2xl font-semibold text-gray-800 mb-2">Order ID: <span class="text-red-500">${appState.orderId}</span></p>
                     <div class="flex justify-between border-t border-gray-200 pt-2">
+                        <span class="text-lg text-gray-600">Size:</span>
+                        <span class="text-lg font-medium">${appState.size} (₱${getPricePerUnit(appState.size)})</span>
+                    </div>
+                    <div class="flex justify-between border-t border-gray-200 pt-2">
                         <span class="text-lg text-gray-600">Items:</span>
-                        <span class="text-lg font-medium">${appState.quantity} x B-RINGS</span>
+                        <span class="text-lg font-medium">${appState.quantity} x B-RINGS (${appState.flavor})</span>
                     </div>
                     <div class="flex justify-between">
                         <span class="text-lg text-gray-600">Fulfillment:</span>
@@ -414,9 +536,9 @@
                     <h3 class="text-2xl font-bold text-amber-700 mb-4 text-center">Need a Caption? ✨</h3>
                     <button
                         id="btn-generate-caption"
-                        class="w-full py-3 text-white text-lg font-bold rounded-lg bg-purple-600 hover:bg-purple-700 transition flex items-center justify-center"
+                        class="w-full py-3 text-white text-lg font-bold rounded-lg bg-purple-600 hover:bg-purple-700 transition flex items-center justify-center shadow-md"
                     >
-                        ✨ Generate Shareable Caption
+                        ${appState.caption ? '🔄 Re-generate Caption' : '✨ Generate Shareable Caption'}
                     </button>
 
                     ${appState.caption ? `
@@ -435,7 +557,7 @@
 
                 <button
                     id="btn-track-order"
-                    class="w-full py-4 mt-6 text-white text-xl font-bold rounded-lg bg-sky-500 hover:bg-sky-600 transition"
+                    class="w-full py-4 mt-6 text-white text-xl font-bold rounded-lg bg-sky-500 hover:bg-sky-600 transition shadow-lg"
                 >
                     Track My Order Status
                 </button>
@@ -443,7 +565,6 @@
         `;
         const setupStep8 = () => {
             const btnGenerate = document.getElementById('btn-generate-caption');
-            const captionOutput = document.getElementById('caption-output');
             
             btnGenerate.onclick = async () => {
                 // Set loading state
@@ -455,7 +576,7 @@
                     ? 'will be picked up soon'
                     : `is out for delivery to ${appState.deliveryDetails.address || 'your location'}`;
                 
-                const prompt = `Write a short, fun, and shareable social media caption for a customer who just ordered ${appState.quantity} B-RINGS (Banana Rings) for ₱${appState.totalAmount}. The order ${fulfillmentText}. Include the total price and the hashtag #BRINGS.`;
+                const prompt = `Write a short, fun, and shareable social media caption for a customer who just ordered ${appState.quantity} ${appState.size} B-RINGS in the ${appState.flavor} flavor for ₱${appState.totalAmount}. The order ${fulfillmentText}. Include the total price and the hashtag #BRINGS.`;
                 const systemInstruction = "You are a witty and cheerful Filipino food blogger. Respond with only the caption text, without any introductory phrases or greetings.";
 
                 const generatedText = await generateCaption(prompt, systemInstruction);
@@ -463,9 +584,6 @@
                 // Update state and UI with the new caption
                 appState.caption = generatedText;
                 updateStateAndRender({ caption: generatedText });
-
-                // Reset button UI (done by re-render, but for immediate effect if needed)
-                // document.getElementById('btn-generate-caption').disabled = false;
             };
 
             const btnCopy = document.getElementById('btn-copy-caption');
@@ -475,10 +593,11 @@
                 };
             }
 
-            document.getElementById('btn-track-order').onclick = () => updateStateAndRender({}, 9);
+            document.getElementById('btn-track-order').onclick = () => updateStateAndRender({}, 9); // Go to new Step 9
         };
 
 
+        // STEP 9: Tracking
         const Step9_Tracking = () => `
             <div class="p-4">
                 <h2 class="text-3xl font-bold text-sky-700 mb-6 text-center">Order Tracking</h2>
@@ -494,19 +613,19 @@
                     />
                     <button
                         id="btn-track"
-                        class="px-4 py-3 text-white font-semibold rounded-lg bg-sky-500 hover:bg-sky-600 transition"
+                        class="px-4 py-3 text-white font-semibold rounded-lg bg-sky-500 hover:bg-sky-600 transition shadow-md"
                     >
                         Track
                     </button>
                 </div>
 
-                <div id="status-output" class="min-h-[100px] bg-sky-50 p-6 rounded-xl border-4 border-sky-300 flex items-center justify-center">
+                <div id="status-output" class="min-h-[100px] bg-sky-50 p-6 rounded-xl border-4 border-sky-300 flex items-center justify-center shadow-inner">
                     <p class="text-gray-500">Enter ID and click 'Track' to see status.</p>
                 </div>
 
                 <button
                     id="btn-new-order"
-                    class="w-full mt-6 py-3 text-white text-xl font-bold rounded-lg bg-amber-500 hover:bg-amber-600 transition"
+                    class="w-full mt-6 py-3 text-white text-xl font-bold rounded-lg bg-amber-500 hover:bg-amber-600 transition shadow-lg"
                 >
                     Start New Order
                 </button>
@@ -536,25 +655,27 @@
             document.getElementById('btn-new-order').onclick = () => updateStateAndRender({
                 step: 1,
                 quantity: 1,
-                totalAmount: PRICE_PER_UNIT,
+                size: SIZE_OPTIONS[0].name,
+                flavor: FLAVOR_OPTIONS[0].name,
+                totalAmount: getPricePerUnit(SIZE_OPTIONS[0].name),
                 fulfillment: null,
                 deliveryDetails: {},
                 paymentMethod: null,
                 orderId: null,
                 caption: null,
-                status: 'Pending Scan',
+                status: 'Pending Order',
             }, 1);
         };
 
-        // Map step number to render and setup functions
+        // Map step number to render and setup functions (Updated Map 1-9)
         const stepMap = {
             1: { render: Step1_Welcome, setup: setupStep1, title: 'Welcome' },
-            2: { render: Step2_ScanQR, setup: setupStep2, title: 'Scan QR' },
-            3: { render: Step3_OrderDetails, setup: setupStep3, title: 'Order Details' },
+            2: { render: Step2_SizeSelection, setup: setupStep2, title: 'Choose Size' },
+            3: { render: Step3_OrderDetails, setup: setupStep3, title: 'Customize Order' },
             4: { render: Step4_FulfillmentChoice, setup: setupStep4, title: 'Fulfillment' },
             5: { render: Step5_DeliveryDetails, setup: setupStep5, title: 'Delivery Details' },
             6: { render: Step6_PaymentSelect, setup: setupStep6, title: 'Payment Method' },
-            7: { render: Step7_PaymentQR, setup: setupStep7, title: 'GCash QR' },
+            7: { render: Step7_PaymentQR, setup: setupStep7, title: 'GCash Transfer' },
             8: { render: Step8_Confirmation, setup: setupStep8, title: 'Confirmation' },
             9: { render: Step9_Tracking, setup: setupStep9, title: 'Tracking' },
         };
@@ -576,8 +697,19 @@
                 </div>
             `;
 
-            // 2. Back Button
+            // 2. Back Button - Available on steps 2 through 8 (Confirmation)
             if (appState.step > 1 && appState.step < 9) {
+                let backStep;
+                if (appState.step === 5) { // Delivery Details -> Fulfillment Choice
+                    backStep = 4;
+                } else if (appState.step === 7) { // GCash Transfer -> Payment Selection
+                    backStep = 6;
+                } else if (appState.step === 8 && appState.paymentMethod === 'Cash') { // Confirmation (Cash) -> Payment Selection
+                    backStep = 6;
+                } else {
+                    backStep = appState.step - 1; 
+                }
+
                 content += `
                     <div class="p-3">
                         <button id="btn-back" class="text-gray-600 flex items-center font-medium">
@@ -598,19 +730,19 @@
 
             // 4. Attach Listeners
             if (appState.step > 1 && appState.step < 9) {
-                document.getElementById('btn-back').onclick = () => updateStateAndRender({}, appState.step === 5 ? 4 : (appState.step === 7 ? 6 : appState.step - 1));
+                let backStep;
+                if (appState.step === 5) {
+                    backStep = 4;
+                } else if (appState.step === 7) {
+                    backStep = 6;
+                } else if (appState.step === 8 && appState.paymentMethod === 'Cash') {
+                    backStep = 6;
+                } else {
+                    backStep = appState.step - 1; 
+                }
+                document.getElementById('btn-back').onclick = () => updateStateAndRender({}, backStep);
             }
             
-            // Special handling for step 5 (delivery details) which might be skipped
-            let finalSetupStep = appState.step;
-            if (appState.step === 6 && appState.fulfillment === 'PickUp') {
-                // If we land on payment but came from pickup, we are at step 6 logic
-                finalSetupStep = 6;
-            } else if (appState.step === 8 && appState.paymentMethod === 'Cash') {
-                // If we land on confirmation after cash payment, we are at step 8 logic
-                finalSetupStep = 8;
-            }
-
             if (currentStep) {
                 currentStep.setup();
             }
