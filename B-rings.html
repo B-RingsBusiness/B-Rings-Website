@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>B-RINGS QR Ordering App</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Define Inter Font and basic styling for aesthetics */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+        /* Custom spinner for loading state */
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid #fff;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        /* Hide number input arrows */
+        input[type='number']::-webkit-inner-spin-button,
+        input[type='number']::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        input[type='number'] {
+            -moz-appearance: textfield;
+        }
+    </style>
+</head>
+<body class="bg-yellow-200 min-h-screen flex items-start justify-center p-4">
+    <div id="app" class="w-full max-w-sm h-auto bg-gray-50 rounded-3xl shadow-2xl overflow-hidden mt-4">
+        <!-- Application content will be injected here by JavaScript -->
+    </div>
+
+    <script>
+        // --- CONFIGURATION & STATE ---
+        const PRODUCT_NAME = "Banana Rings (B-RINGS)";
+        const PRICE_PER_UNIT = 20; // ₱20
+        const BANANA_YELLOW = 'bg-yellow-400';
+        const RING_BROWN = 'text-amber-900';
+
+        const API_KEY = ""; // Placeholder for Canvas environment
+        const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${API_KEY}`;
+        const MAX_RETRIES = 3;
+        
+        // Global state object
+        let appState = {
+            step: 1,
+            quantity: 1,
+            totalAmount: PRICE_PER_UNIT,
+            fulfillment: null,
+            deliveryDetails: {},
+            paymentMethod: null,
+            orderId: null,
+            status: 'Pending Scan',
+            caption: null, // For storing generated caption
+        };
+
+        // --- UTILITY FUNCTIONS ---
+
+        const generateOrderId = () => 'BR' + Math.floor(1000 + Math.random() * 9000);
+
+        const getMockTrackingStatus = (orderId) => {
+            const statuses = [
+                "📦 Status: Order placed and address confirmed.",
+                "👨‍🍳 Status: B-RINGS are being fried to a perfect golden crisp!",
+                "🛵 Status: Out for delivery! Estimated arrival in 20 minutes.",
+                "🎉 Status: Delivered! Enjoy your B-RINGS!",
+                "📍 Status: Ready for Pick Up at B-RINGS HQ."
+            ];
+            // Use the last digit of the ID to determine the mock status consistently
+            const index = parseInt(orderId.slice(-1)) % statuses.length;
+            return statuses[index];
+        };
+
+        const copyToClipboard = (text) => {
+            const tempInput = document.createElement('textarea');
+            tempInput.value = text;
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            document.execCommand('copy');
+            document.body.removeChild(tempInput);
+            console.log('Caption copied to clipboard!'); 
+        };
+
+        /**
+         * Updates the state, recalculates total, and triggers a re-render.
+         * @param {Object} updates - Object containing state fields to update.
+         * @param {number} newStep - The step number to navigate to.
+         */
+        const updateStateAndRender = (updates = {}, newStep = appState.step) => {
+            appState = { ...appState, ...updates };
+            appState.totalAmount = appState.quantity * PRICE_PER_UNIT;
+            appState.step = newStep;
+            
+            // Auto-assign orderId if moving past the quantity step
+            if (appState.step > 3 && !appState.orderId) {
+                appState.orderId = generateOrderId();
+            }
+
+            // Scroll to top
+            document.querySelector('#app').scrollTop = 0;
+            renderApp();
+        };
+
+        // --- GEMINI API INTEGRATION ---
+        
+        /**
+         * Calls the Gemini API to generate a creative caption.
+         * @param {string} prompt The user's request.
+         * @param {string} systemInstruction The system prompt for the model's persona.
+         * @returns {Promise<string>} The generated text.
+         */
+        const generateCaption = async (prompt, systemInstruction) => {
+            const payload = {
+                contents: [{ parts: [{ text: prompt }] }],
+                systemInstruction: { parts: [{ text: systemInstruction }] },
+            };
+
+            for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+                try {
+                    const response = await fetch(GEMINI_API_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        if (attempt < MAX_RETRIES - 1) {
+                            await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+                            continue; // Retry
+                        }
+                        throw new Error(`API call failed with status: ${response.status}`);
+                    }
+
+                    const result = await response.json();
+                    const text = result.candidates?.[0]?.content?.parts?.[0]?.text || "Could not generate caption. Try again!";
+                    return text;
+
+                } catch (error) {
+                    console.error(`Attempt ${attempt + 1} failed:`, error);
+                    if (attempt === MAX_RETRIES - 1) {
+                        return "Failed to connect to AI service. Please try again later.";
+                    }
+                    await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+                }
+            }
+            return "Error generating caption.";
+        };
+
+
+        // --- UI RENDER FUNCTIONS (STEPS) ---
+
+        const Step1_Welcome = () => `
+            <div class="flex flex-col items-center p-4">
+                <h2 class="text-4xl font-extrabold ${RING_BROWN} mb-2">Welcome to</h2>
+                <div class="flex items-center space-x-2 mb-8">
+                    <span class="text-6xl">🍌</span>
+                    <h1 class="text-5xl font-black text-yellow-600">B-RINGS</h1>
+                </div>
+                <p class="text-xl text-gray-700 text-center mb-10">
+                    The fastest and easiest way to order your favorite Banana Rings.
+                </p>
+                <button
+                    id="btn-start-ordering"
+                    class="w-full py-4 text-white text-2xl font-bold rounded-xl ${BANANA_YELLOW} bg-opacity-90 hover:bg-opacity-100 transition shadow-lg shadow-yellow-500/50"
+                >
+                    Start Ordering
+                </button>
+            </div>
+        `;
+        const setupStep1 = () => {
+            document.getElementById('btn-start-ordering').onclick = () => updateStateAndRender({}, 2);
+        };
+
+
+        const Step2_ScanQR = () => `
+            <div class="flex flex-col items-center p-4">
+                <h2 class="text-3xl font-bold ${RING_BROWN} mb-4">Scan to Start</h2>
+                <p class="text-gray-600 text-center mb-8">
+                    In a real setup, this area would launch your device's camera to scan the master B-RINGS QR Code.
+                </p>
+                <div class="w-60 h-60 bg-gray-200 flex items-center justify-center rounded-2xl border-4 border-dashed border-gray-400 mb-8 shadow-inner">
+                    <span class="text-5xl text-gray-500">📷 QR Area</span>
+                </div>
+                <button
+                    id="btn-simulate-scan"
+                    class="w-full py-3 bg-green-500 text-white text-xl font-semibold rounded-lg hover:bg-green-600 transition"
+                >
+                    Simulate QR Scan (View Menu)
+                </button>
+            </div>
+        `;
+        const setupStep2 = () => {
+            document.getElementById('btn-simulate-scan').onclick = () => updateStateAndRender({ status: 'Menu Scanned' }, 3);
+        };
+
+
+        const Step3_OrderDetails = () => `
+            <div class="p-4">
+                <h2 class="text-3xl font-bold ${RING_BROWN} mb-6 text-center">Your B-RINGS Order</h2>
+                <div class="flex justify-between items-center mb-6 border-b pb-4">
+                    <div class="flex items-center space-x-4">
+                        <img src="https://placehold.co/80x80/FFC107/4E342E?text=Rings" alt="Banana Rings" class="rounded-xl shadow-md"/>
+                        <div>
+                            <p class="font-bold text-xl">${PRODUCT_NAME}</p>
+                            <p class="text-gray-500">Crispy Fried Banana Rings</p>
+                        </div>
+                    </div>
+                    <p class="text-2xl font-extrabold text-amber-600">₱${PRICE_PER_UNIT}</p>
+                </div>
+
+                <div class="flex justify-between items-center mb-8">
+                    <label class="text-xl font-semibold text-gray-700">Quantity</label>
+                    <input
+                        type="number"
+                        min="1"
+                        id="input-quantity"
+                        value="${appState.quantity}"
+                        class="w-20 text-center text-2xl font-bold p-2 border-2 border-yellow-500 rounded-lg focus:ring-yellow-500 focus:border-yellow-500"
+                    />
+                </div>
+
+                <div class="text-right p-4 bg-yellow-100 rounded-lg">
+                    <p class="text-2xl font-bold text-gray-800">Total: <span class="text-green-600">₱${appState.totalAmount}</span></p>
+                </div>
+
+                <button
+                    id="btn-proceed-fulfillment"
+                    class="w-full mt-6 py-4 text-white text-xl font-bold rounded-lg ${BANANA_YELLOW} hover:bg-yellow-500 transition"
+                >
+                    Proceed to Fulfillment
+                </button>
+            </div>
+        `;
+        const setupStep3 = () => {
+            document.getElementById('input-quantity').onchange = (e) => {
+                const newQuantity = parseInt(e.target.value) || 1;
+                updateStateAndRender({ quantity: newQuantity });
+            };
+            document.getElementById('btn-proceed-fulfillment').onclick = () => updateStateAndRender({ status: 'Fulfillment Selection' }, 4);
+        };
+
+
+        const FulfillmentCard = (type, icon, details, selected) => `
+            <div
+                id="card-${type.toLowerCase()}"
+                class="p-6 rounded-xl cursor-pointer shadow-md border-4 ${selected ? 'border-green-500 bg-green-50' : 'border-yellow-300 bg-yellow-50 hover:bg-yellow-100'}"
+            >
+                <p class="text-4xl mb-2">${icon}</p>
+                <h3 class="text-2xl font-bold text-gray-800">${type}</h3>
+                <p class="text-gray-600">${details}</p>
+            </div>
+        `;
+        const Step4_FulfillmentChoice = () => `
+            <div class="p-4">
+                <h2 class="text-3xl font-bold ${RING_BROWN} mb-6 text-center">How would you like to get it?</h2>
+                <div class="grid grid-cols-1 gap-6">
+                    ${FulfillmentCard('Delivery', '🛵', 'Put Address. Delivered straight to your location.', appState.fulfillment === 'Delivery')}
+                    ${FulfillmentCard('Pick Up', '📍', 'Collect from B-RINGS HQ. Faster and no delivery fee.', appState.fulfillment === 'PickUp')}
+                </div>
+            </div>
+        `;
+        const setupStep4 = () => {
+            document.getElementById('card-delivery').onclick = () => updateStateAndRender({ fulfillment: 'Delivery', status: 'Awaiting Address' }, 5);
+            document.getElementById('card-pick up').onclick = () => updateStateAndRender({ fulfillment: 'PickUp', status: 'Payment Awaiting' }, 6); // Skip address step
+        };
+
+
+        const InputField = (label, type, name, value) => `
+            <div class="mb-4">
+                <label class="block text-gray-700 font-semibold mb-1">${label}</label>
+                <input
+                    type="${type}"
+                    placeholder="Enter ${label}"
+                    name="${name}"
+                    value="${value || ''}"
+                    class="w-full p-3 border border-yellow-300 rounded-lg focus:ring-yellow-500 focus:border-yellow-500"
+                    required
+                />
+            </div>
+        `;
+        const Step5_DeliveryDetails = () => `
+            <div class="p-4">
+                <h2 class="text-3xl font-bold text-red-500 mb-6 text-center">Delivery Details</h2>
+                <p class="text-gray-600 mb-4 text-center">Please fill in the information correctly.</p>
+
+                <div id="error-message" class="hidden p-3 mb-4 bg-red-100 text-red-600 rounded-lg"></div>
+                
+                <form id="delivery-form">
+                    ${InputField('Full Name', 'text', 'name', appState.deliveryDetails.name)}
+                    ${InputField('Full Address', 'text', 'address', appState.deliveryDetails.address)}
+                    ${InputField('Phone Number', 'tel', 'phone', appState.deliveryDetails.phone)}
+
+                    <button
+                        type="submit"
+                        class="w-full mt-6 py-4 text-white text-xl font-bold rounded-lg bg-red-500 hover:bg-red-600 transition"
+                    >
+                        Confirm Address
+                    </button>
+                </form>
+            </div>
+        `;
+        const setupStep5 = () => {
+            document.getElementById('delivery-form').onsubmit = (e) => {
+                e.preventDefault();
+                const form = e.target;
+                const details = {
+                    name: form.name.value.trim(),
+                    address: form.address.value.trim(),
+                    phone: form.phone.value.trim(),
+                };
+
+                const errorDiv = document.getElementById('error-message');
+                if (!details.name || !details.address || !details.phone) {
+                    errorDiv.textContent = 'Please fill in all delivery information.';
+                    errorDiv.classList.remove('hidden');
+                    return;
+                }
+                errorDiv.classList.add('hidden');
+                updateStateAndRender({ deliveryDetails: details, status: 'Payment Awaiting' }, 6);
+            };
+        };
+
+
+        const PaymentCard = (method, icon, details, selected) => `
+            <div
+                id="card-${method.toLowerCase()}"
+                class="p-6 rounded-xl cursor-pointer shadow-md border-4 ${selected ? 'border-green-500 bg-green-50' : 'border-yellow-300 bg-yellow-50 hover:bg-yellow-100'}"
+            >
+                <p class="text-4xl mb-2">${icon}</p>
+                <h3 class="text-2xl font-bold text-gray-800">${method}</h3>
+                <p class="text-gray-600">${details}</p>
+            </div>
+        `;
+        const Step6_PaymentSelect = () => `
+            <div class="p-4">
+                <h2 class="text-3xl font-bold ${RING_BROWN} mb-6 text-center">Select Payment Method</h2>
+                <div class="grid grid-cols-1 gap-6">
+                    ${PaymentCard('GCash', '📱', 'Pay instantly by scanning our QR Code.', appState.paymentMethod === 'GCash')}
+                    ${PaymentCard('Cash', '💵', 'Pay in cash upon Pick Up or Delivery.', appState.paymentMethod === 'Cash')}
+                </div>
+            </div>
+        `;
+        const setupStep6 = () => {
+            document.getElementById('card-gcash').onclick = () => updateStateAndRender({ paymentMethod: 'GCash', status: 'Awaiting GCash Scan' }, 7);
+            document.getElementById('card-cash').onclick = () => updateStateAndRender({ paymentMethod: 'Cash', status: 'Awaiting Cash Payment' }, 8);
+        };
+
+
+        const Step7_PaymentQR = () => `
+            <div class="p-4 flex flex-col items-center">
+                <h2 class="text-3xl font-bold text-green-700 mb-2 text-center">GCash Payment</h2>
+                <p class="text-gray-600 text-center mb-6">Scan the QR code below to complete your payment of:</p>
+
+                <div class="text-4xl font-extrabold text-green-600 mb-8 p-3 bg-green-100 rounded-lg border-2 border-green-400">
+                    ₱${appState.totalAmount}
+                </div>
+
+                <div class="w-60 h-60 bg-white flex items-center justify-center rounded-2xl p-4 border-4 border-green-500 mb-8 shadow-xl">
+                    <img src="https://placehold.co/150x150/00A9F4/FFFFFF?text=GCash+QR" alt="GCash QR Code" class="w-full h-full object-contain"/>
+                </div>
+
+                <button
+                    id="btn-payment-successful"
+                    class="w-full py-4 text-white text-xl font-bold rounded-lg bg-green-500 hover:bg-green-600 transition"
+                >
+                    Payment Successful (Simulate)
+                </button>
+            </div>
+        `;
+        const setupStep7 = () => {
+            document.getElementById('btn-payment-successful').onclick = () => updateStateAndRender({ status: 'Payment Successful' }, 8);
+        };
+
+
+        const Step8_Confirmation = () => `
+            <div class="p-4">
+                <h2 class="text-4xl font-extrabold text-green-600 mb-4 text-center">Order Confirmed! 🎉</h2>
+                <div class="bg-green-50 p-6 rounded-xl border-4 border-green-300 mb-8">
+                    <p class="text-2xl font-semibold text-gray-800 mb-2">Order ID: <span class="text-red-500">${appState.orderId}</span></p>
+                    <div class="flex justify-between border-t border-gray-200 pt-2">
+                        <span class="text-lg text-gray-600">Items:</span>
+                        <span class="text-lg font-medium">${appState.quantity} x B-RINGS</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-lg text-gray-600">Fulfillment:</span>
+                        <span class="text-lg font-medium">${appState.fulfillment === 'PickUp' ? 'Pick Up' : 'Delivery'}</span>
+                    </div>
+                    <div class="flex justify-between border-t border-gray-200 mt-2 pt-2">
+                        <span class="text-xl font-bold text-gray-800">Total Paid:</span>
+                        <span class="text-xl font-bold text-green-600">₱${appState.totalAmount}</span>
+                    </div>
+                </div>
+
+                <p class="text-center text-gray-700 mb-6">
+                    Please save your <b>Order ID</b> for tracking. We are now preparing your delicious Banana Rings!
+                </p>
+
+                <!-- --- GEMINI AI FEATURE: CAPTION GENERATOR --- -->
+                <div class="mt-8 pt-4 border-t border-yellow-300">
+                    <h3 class="text-2xl font-bold text-amber-700 mb-4 text-center">Need a Caption? ✨</h3>
+                    <button
+                        id="btn-generate-caption"
+                        class="w-full py-3 text-white text-lg font-bold rounded-lg bg-purple-600 hover:bg-purple-700 transition flex items-center justify-center"
+                    >
+                        ✨ Generate Shareable Caption
+                    </button>
+
+                    ${appState.caption ? `
+                        <div id="caption-output" class="mt-4 p-4 bg-purple-50 rounded-lg border border-purple-300">
+                            <p class="text-purple-900 italic text-lg">${appState.caption}</p>
+                            <button
+                                id="btn-copy-caption"
+                                class="mt-2 text-xs text-purple-600 hover:underline"
+                            >
+                                Copy to Clipboard
+                            </button>
+                        </div>
+                    ` : '<div id="caption-output"></div>'}
+                </div>
+                <!-- --- END GEMINI AI FEATURE --- -->
+
+                <button
+                    id="btn-track-order"
+                    class="w-full py-4 mt-6 text-white text-xl font-bold rounded-lg bg-sky-500 hover:bg-sky-600 transition"
+                >
+                    Track My Order Status
+                </button>
+            </div>
+        `;
+        const setupStep8 = () => {
+            const btnGenerate = document.getElementById('btn-generate-caption');
+            const captionOutput = document.getElementById('caption-output');
+            
+            btnGenerate.onclick = async () => {
+                // Set loading state
+                btnGenerate.disabled = true;
+                btnGenerate.classList.replace('bg-purple-600', 'bg-purple-400');
+                btnGenerate.innerHTML = '<div class="spinner mr-2"></div> <span>Generating Witty Caption...</span>';
+
+                const fulfillmentText = appState.fulfillment === 'PickUp'
+                    ? 'will be picked up soon'
+                    : `is out for delivery to ${appState.deliveryDetails.address || 'your location'}`;
+                
+                const prompt = `Write a short, fun, and shareable social media caption for a customer who just ordered ${appState.quantity} B-RINGS (Banana Rings) for ₱${appState.totalAmount}. The order ${fulfillmentText}. Include the total price and the hashtag #BRINGS.`;
+                const systemInstruction = "You are a witty and cheerful Filipino food blogger. Respond with only the caption text, without any introductory phrases or greetings.";
+
+                const generatedText = await generateCaption(prompt, systemInstruction);
+
+                // Update state and UI with the new caption
+                appState.caption = generatedText;
+                updateStateAndRender({ caption: generatedText });
+
+                // Reset button UI (done by re-render, but for immediate effect if needed)
+                // document.getElementById('btn-generate-caption').disabled = false;
+            };
+
+            const btnCopy = document.getElementById('btn-copy-caption');
+            if (btnCopy) {
+                btnCopy.onclick = () => {
+                    copyToClipboard(appState.caption);
+                };
+            }
+
+            document.getElementById('btn-track-order').onclick = () => updateStateAndRender({}, 9);
+        };
+
+
+        const Step9_Tracking = () => `
+            <div class="p-4">
+                <h2 class="text-3xl font-bold text-sky-700 mb-6 text-center">Order Tracking</h2>
+                <p class="text-gray-600 text-center mb-4">Enter your B-RINGS Order ID to check the latest status.</p>
+
+                <div class="mb-6 flex space-x-2">
+                    <input
+                        type="text"
+                        placeholder="Enter Order ID (e.g., BR1234)"
+                        id="input-tracking-id"
+                        value="${appState.orderId || ''}"
+                        class="flex-grow p-3 border-2 border-sky-300 rounded-lg focus:ring-sky-500 focus:border-sky-500 font-mono"
+                    />
+                    <button
+                        id="btn-track"
+                        class="px-4 py-3 text-white font-semibold rounded-lg bg-sky-500 hover:bg-sky-600 transition"
+                    >
+                        Track
+                    </button>
+                </div>
+
+                <div id="status-output" class="min-h-[100px] bg-sky-50 p-6 rounded-xl border-4 border-sky-300 flex items-center justify-center">
+                    <p class="text-gray-500">Enter ID and click 'Track' to see status.</p>
+                </div>
+
+                <button
+                    id="btn-new-order"
+                    class="w-full mt-6 py-3 text-white text-xl font-bold rounded-lg bg-amber-500 hover:bg-amber-600 transition"
+                >
+                    Start New Order
+                </button>
+            </div>
+        `;
+        const setupStep9 = () => {
+            const btnTrack = document.getElementById('btn-track');
+            const inputId = document.getElementById('input-tracking-id');
+            const outputDiv = document.getElementById('status-output');
+
+            btnTrack.onclick = () => {
+                const trackingId = inputId.value;
+                if (!trackingId) return;
+
+                btnTrack.disabled = true;
+                btnTrack.textContent = '...';
+                outputDiv.innerHTML = '<p class="text-xl font-semibold text-sky-800 text-center flex items-center justify-center"><div class="spinner mr-2 border-sky-800 border-t-sky-800"></div> Searching...</p>';
+
+                setTimeout(() => {
+                    const status = getMockTrackingStatus(trackingId);
+                    outputDiv.innerHTML = `<p class="text-xl font-semibold text-sky-800 text-center">${status}</p>`;
+                    btnTrack.disabled = false;
+                    btnTrack.textContent = 'Track';
+                }, 1500);
+            };
+
+            document.getElementById('btn-new-order').onclick = () => updateStateAndRender({
+                step: 1,
+                quantity: 1,
+                totalAmount: PRICE_PER_UNIT,
+                fulfillment: null,
+                deliveryDetails: {},
+                paymentMethod: null,
+                orderId: null,
+                caption: null,
+                status: 'Pending Scan',
+            }, 1);
+        };
+
+        // Map step number to render and setup functions
+        const stepMap = {
+            1: { render: Step1_Welcome, setup: setupStep1, title: 'Welcome' },
+            2: { render: Step2_ScanQR, setup: setupStep2, title: 'Scan QR' },
+            3: { render: Step3_OrderDetails, setup: setupStep3, title: 'Order Details' },
+            4: { render: Step4_FulfillmentChoice, setup: setupStep4, title: 'Fulfillment' },
+            5: { render: Step5_DeliveryDetails, setup: setupStep5, title: 'Delivery Details' },
+            6: { render: Step6_PaymentSelect, setup: setupStep6, title: 'Payment Method' },
+            7: { render: Step7_PaymentQR, setup: setupStep7, title: 'GCash QR' },
+            8: { render: Step8_Confirmation, setup: setupStep8, title: 'Confirmation' },
+            9: { render: Step9_Tracking, setup: setupStep9, title: 'Tracking' },
+        };
+
+        // --- MAIN RENDER FUNCTION ---
+        const renderApp = () => {
+            const appContainer = document.getElementById('app');
+            const currentStep = stepMap[appState.step];
+            
+            let content = '';
+            
+            // 1. Mobile Status Bar
+            const stepTitle = currentStep ? currentStep.title : 'B-RINGS';
+            content += `
+                <div class="h-10 bg-gray-900 flex items-center justify-between px-4 text-xs text-white">
+                    <span>${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}</span>
+                    <span class="font-bold">${stepTitle}</span>
+                    <span>📶 🔋</span>
+                </div>
+            `;
+
+            // 2. Back Button
+            if (appState.step > 1 && appState.step < 9) {
+                content += `
+                    <div class="p-3">
+                        <button id="btn-back" class="text-gray-600 flex items-center font-medium">
+                            <svg class="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+                            Back
+                        </button>
+                    </div>
+                `;
+            }
+
+            // 3. Step Content
+            content += `<div class="p-4 pt-0" id="step-content-container">`;
+            content += currentStep.render();
+            content += `</div>`;
+
+            // Inject the HTML
+            appContainer.innerHTML = content;
+
+            // 4. Attach Listeners
+            if (appState.step > 1 && appState.step < 9) {
+                document.getElementById('btn-back').onclick = () => updateStateAndRender({}, appState.step === 5 ? 4 : (appState.step === 7 ? 6 : appState.step - 1));
+            }
+            
+            // Special handling for step 5 (delivery details) which might be skipped
+            let finalSetupStep = appState.step;
+            if (appState.step === 6 && appState.fulfillment === 'PickUp') {
+                // If we land on payment but came from pickup, we are at step 6 logic
+                finalSetupStep = 6;
+            } else if (appState.step === 8 && appState.paymentMethod === 'Cash') {
+                // If we land on confirmation after cash payment, we are at step 8 logic
+                finalSetupStep = 8;
+            }
+
+            if (currentStep) {
+                currentStep.setup();
+            }
+        };
+
+        // Initialize the application when the window loads
+        window.onload = renderApp;
+    </script>
+</body>
+</html>
